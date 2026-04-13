@@ -1,16 +1,21 @@
 import numpy as np
-from sklearn.svm import SVC
+from sklearn.svm import LinearSVC
+import torch
+import torch.optim as optim
+import numpy as np
+import scipy.sparse as sp
+from tqdm import tqdm
 
 def calculate_hinge_loss(model, X, y):
     """
     Calculates the individual hinge loss for each sample: max(0, 1 - y * decision_function(x))
     """
     decision_values = model.decision_function(X)
-    # Hinge loss per sample
-    losses = np.maximum(0, 1 - y * decision_values)
+    # Ensure y and decision_values are 1D arrays to prevent broadcasting bugs
+    losses = np.maximum(0, 1 - np.ravel(y) * np.ravel(decision_values))
     return losses
 
-def alfa_poison(X, y, epsilon=0.03, max_iter=10):
+def alfa_poison(X, y, logger, epsilon=0.03, max_iter=10):
     """
     Implementation of the ALFA attack variant.
     Selects poisoned points from the dataset to maximize the loss difference 
@@ -18,7 +23,10 @@ def alfa_poison(X, y, epsilon=0.03, max_iter=10):
     
     Expects y to be in {-1, 1}.
     """
-    print(f"   -> Starting in-place ALFA (epsilon={epsilon*100}%)...")
+    logger.info(f"   -> Starting in-place ALFA (epsilon={epsilon*100}%)...")
+    
+    # FIX WARNING: Force y to be a strict 1D array 
+    y = np.ravel(y)
     
     n_samples = X.shape[0]
     n_poison = int(epsilon * n_samples)
@@ -28,15 +36,17 @@ def alfa_poison(X, y, epsilon=0.03, max_iter=10):
         
     # 1. Define the pool of potential poisoned points: The entire dataset flipped
     X_pool = X
-    y_pool = -y # Flip all labels to evaluate the potential cost/benefit
+    y_pool = -y 
     
-    # 2. Train the original clean model (theta*)
-    print("      Training original clean model...")
-    clean_model = SVC(kernel='linear') 
+    # 2. Train the original clean model 
+    # FIX CRASH: Use LinearSVC instead of SVC(kernel='linear')
+    # dual=False is highly recommended when n_samples > n_features (50000 > 100)
+    logger.info("      Training original clean model...")
+    clean_model = LinearSVC(dual=False, random_state=42) 
     clean_model.fit(X, y)
 
     clean_acc = clean_model.score(X, y)
-    print(f"      [METRIC] Clean model accuracy (on true labels): {clean_acc:.4f}")
+    logger.info(f"      [METRIC] Clean model accuracy (on true labels): {clean_acc:.4f}")
     
     # Calculate loss of the flipped pool under the clean model
     loss_clean = calculate_hinge_loss(clean_model, X_pool, y_pool)
@@ -51,10 +61,12 @@ def alfa_poison(X, y, epsilon=0.03, max_iter=10):
         
         # Create the current poisoned label array by flipping the selected indices
         y_poisoned = np.copy(y)
-        y_poisoned[list(current_poison_indices)] = -y_poisoned[list(current_poison_indices)]
+        idx_list = list(current_poison_indices)
+        y_poisoned[idx_list] = -y_poisoned[idx_list]
         
-        # Train the poisoned model (theta_hat)
-        poisoned_model = SVC(kernel='linear')
+        # Train the poisoned model 
+        # FIX CRASH: LinearSVC here too
+        poisoned_model = LinearSVC(dual=False, random_state=42)
         poisoned_model.fit(X, y_poisoned)
         
         # Calculate loss of the entire flipped pool under the new poisoned model
@@ -69,34 +81,27 @@ def alfa_poison(X, y, epsilon=0.03, max_iter=10):
         
         # Check for convergence
         if new_poison_indices == current_poison_indices:
-            print(f"   -> ALFA successfully converged at iteration {i+1}!")
+            logger.info(f"   -> ALFA successfully converged at iteration {i+1}!")
             final_poisoned_model = poisoned_model
             break
             
         # Update for next iteration
         current_poison_indices = new_poison_indices
         
-    print("   -> ALFA optimization finished.")
+    logger.info("   -> ALFA optimization finished.")
 
     # Create the final poisoned array
     y_poisoned_final = np.copy(y)
-    y_poisoned_final[list(current_poison_indices)] = -y_poisoned_final[list(current_poison_indices)]
+    final_idx_list = list(current_poison_indices)
+    y_poisoned_final[final_idx_list] = -y_poisoned_final[final_idx_list]
 
     if final_poisoned_model is not None:
         # Evaluate how much the poisoned model degrades on the TRUE underlying labels
         poisoned_acc = final_poisoned_model.score(X, y)
-        print(f"      [METRIC] Poisoned model accuracy (on true labels): {poisoned_acc:.4f}")
-        print(f"      [METRIC] Total accuracy drop caused by ALFA: {(clean_acc - poisoned_acc)*100:.2f}%")
+        logger.info(f"      [METRIC] Poisoned model accuracy (on true labels): {poisoned_acc:.4f}")
+        logger.info(f"      [METRIC] Total accuracy drop caused by ALFA: {(clean_acc - poisoned_acc)*100:.2f}%")
     
-    # Return exact same size X and y, with only labels flipped
     return X, y_poisoned_final
-
-
-import torch
-import torch.optim as optim
-import numpy as np
-import scipy.sparse as sp
-from tqdm import tqdm
 
 def alfa_pytorch(X_train, y_train, rate, C=1.0, max_iter=10, inner_iter=50):
     """
