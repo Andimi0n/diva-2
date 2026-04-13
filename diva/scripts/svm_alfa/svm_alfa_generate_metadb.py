@@ -51,7 +51,7 @@ class AlfaPoisoner(BasePoisoner):
                     time_start = time.time()
                     y_flip = self.get_y_flip(X_train, y_train, rate, clf)
                     time_elapse = time.time() - time_start
-                    print('Generating {:.0f}% poison labels took {:.1f}s'.format(rate * 100, time_elapse))
+                    self.logger.info('  Generating {:.0f}% poison labels took {:.1f}s'.format(rate * 100, time_elapse))
                     to_csv(X_train, y_flip, cols, path_poison_data)
                 
                 svm_params = clf.get_params()
@@ -60,10 +60,10 @@ class AlfaPoisoner(BasePoisoner):
                 acc_train_poison = clf_poison.score(X_train, y_flip)
                 acc_test_poison = clf_poison.score(X_test, y_test)
             except Exception as e:
-                print(e)
+                self.logger.error(e)
                 acc_train_poison, acc_test_poison = 0, 0
             
-            print('P-Rate [{:.2f}] Acc  P-train: {:.2f} C-test: {:.2f}'.format(rate * 100, acc_train_poison * 100, acc_test_poison * 100))
+            self.logger.info('  P-Rate [{:.2f}] Acc  P-train: {:.2f} C-test: {:.2f}'.format(rate * 100, acc_train_poison * 100, acc_test_poison * 100))
             path_poison_data_list.append(path_poison_data)
             accuracy_train_poison.append(acc_train_poison)
             accuracy_test_poison.append(acc_test_poison)
@@ -72,6 +72,7 @@ class AlfaPoisoner(BasePoisoner):
 
     def apply_poisoning(self, file_paths, advx_range):
         for file_path in file_paths:
+            self.logger.info(f"Start poisoning for {file_path}")
             X_train, y_train, cols = open_csv(file_path)
             X_train, X_test, y_train, y_test = train_test_split(X_train, y_train, test_size=0.2)
             dataname = Path(file_path).stem

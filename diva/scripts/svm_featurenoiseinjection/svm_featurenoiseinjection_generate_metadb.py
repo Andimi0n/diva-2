@@ -55,10 +55,10 @@ class FeatureNoisePoisoner(BasePoisoner):
                 acc_train_noisy = clf_noisy.score(X_train_noisy, y_train_noisy)
                 acc_test_noisy = clf_noisy.score(X_test, y_test)
             except Exception as e:
-                print(e)
+                self.logger.error(e)
                 acc_train_noisy, acc_test_noisy = 0, 0
             
-            print("Noise Rate [{:.2f}%] - Acc  Noisy Train: {:.2f}%  Test Set: {:.2f}%".format(
+            self.logger.info("      Noise Rate [{:.2f}%] - Acc  Noisy Train: {:.2f}%  Test Set: {:.2f}%".format(
                 rate * 100, acc_train_noisy * 100, acc_test_noisy * 100))
             
             path_noisy_data_list.append(path_noisy_data)
@@ -69,6 +69,7 @@ class FeatureNoisePoisoner(BasePoisoner):
 
     def apply_poisoning(self, file_paths, advx_range):
         for file_path in file_paths:
+            self.logger.info(f"Started poisoning for {file_path}")
             X_train, y_train, cols = open_csv(file_path)
             X_train, X_test, y_train, y_test = train_test_split(X_train, y_train, test_size=0.2)
             dataname = Path(file_path).stem

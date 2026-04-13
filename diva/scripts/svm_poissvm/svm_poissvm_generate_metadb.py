@@ -106,7 +106,7 @@ class PoisSVMPoisoner(BasePoisoner):
             svm = self.train_svm(X_poisoned, y_poisoned, C=C, gamma=gamma)
 
             if prev_loss is not None and abs(L_xc - prev_loss) < EPSILON:
-                print(f"Converged at iteration {iteration}")
+                self.logger.info(f"     Converged at iteration {iteration}")
                 break
 
             prev_loss = L_xc
@@ -118,6 +118,7 @@ class PoisSVMPoisoner(BasePoisoner):
 
     def apply_poisoning(self, file_paths, advx_range):
         for file in file_paths:
+            self.logger.info(f"Started poisoning for {file}")
             X, y, _, _ = self.load_and_preprocess_data(file)
             X_train_full, X_test, y_train_full, y_test = train_test_split(X, y, test_size=0.2, random_state=RANDOM_SEED, stratify=y)
             X_train, X_val, y_train, y_val = train_test_split(X_train_full, y_train_full, test_size=0.2, random_state=RANDOM_SEED, stratify=y_train_full)

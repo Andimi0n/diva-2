@@ -11,7 +11,6 @@ logger = logging.getLogger(__name__)
 
 def log_cols(path_data):
     """Read data from a CSV file, output the column names"""
-    logger.info('Load from:', path_data)
     df_data = pd.read_csv(path_data)
     cols = df_data.columns.tolist()
 
@@ -20,7 +19,6 @@ def log_cols(path_data):
 
 def drop_cols(path_data, indices_to_drop):
     """Read data from a CSV file, drops columns by index, output the column names"""
-    logger.info('Load from:', path_data)
     df_data = pd.read_csv(path_data)
     cols = df_data.columns.tolist()
     cols_to_drop = [cols[i] for i in indices_to_drop]
@@ -57,13 +55,11 @@ def flip_binary_label(y, idx, use_neg_label=False):
 def create_dir(path):
     """Create directory if the input path is not found."""
     if not os.path.exists(path):
-        logger.info('Creating directory:', path)
         os.makedirs(path)
 
 
 def open_csv(path_data, label_name='y'):
     """Read data from a CSV file, return X, y and column names."""
-    logger.info('Load from:', path_data)
     df_data = pd.read_csv(path_data)
     y = df_data[label_name].to_numpy()
     df_data = df_data.drop([label_name], axis=1)
@@ -96,7 +92,6 @@ def to_json(data_dict, path):
             return obj.__str__()
 
     with open(path, 'w') as file:
-        logger.info('Save to:', path)
         json.dump(data_dict, file, default=converter)
 
 
@@ -107,4 +102,4 @@ def open_json(path):
             data_json = json.load(file)
             return data_json
     except:
-        logger.error(f'Cannot open {path}')
+        print(f'Cannot open {path}')

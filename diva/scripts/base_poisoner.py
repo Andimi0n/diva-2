@@ -3,6 +3,7 @@ import glob
 import pandas as pd
 from abc import ABC, abstractmethod
 from pymfe.mfe import MFE
+import logging
 
 class BasePoisoner(ABC):
     """
@@ -10,6 +11,7 @@ class BasePoisoner(ABC):
     Handles standard directory setup, complexity extraction, and MetaDB merging.
     """
     def __init__(self, name, base_folder, custom_complexity_dir=None):
+        self.logger = logging.getLogger(name)
         self.name = name
         self.base_folder = base_folder
         
@@ -20,7 +22,7 @@ class BasePoisoner(ABC):
             self.complexity_dir = os.path.join(base_folder, "poisoned_data", name)
             
         self.csv_score = os.path.join(base_folder, "poisoned_data", f"synth_{name}_score.csv")
-        self.meta_db = os.path.join(base_folder, f"meta_database_{name}.csv")
+        self.meta_db = os.path.join(base_folder, "metadb", f"meta_database_{name}.csv")
 
     @abstractmethod
     def apply_poisoning(self, file_paths, advx_range):
@@ -63,7 +65,7 @@ class BasePoisoner(ABC):
         Shared logic to merge SVM scores with Complexity Measures.
         """
         if not os.path.exists(self.csv_score):
-            print(f"No CSV found at {self.csv_score}. Saving complexity data only.")
+            self.logger.error(f"No CSV found at {self.csv_score}. Saving complexity data only.")
             cmeasure_dataframe.to_csv(self.meta_db, index=False)
             return
 
@@ -80,25 +82,25 @@ class BasePoisoner(ABC):
             merged_data = merged_data.drop_duplicates(subset=["Path.Poison"])
 
         if merged_data.empty:
-            print(f"Warning: No matching data found for merging in {self.name}.")
+            self.logger.warning(f"Warning: No matching data found for merging in {self.name}.")
 
         merged_data.to_csv(self.meta_db, index=False)
-        print(f"Merged MetaDB saved to {self.meta_db}")
+        self.logger.info(f"Merged MetaDB saved to {self.meta_db}")
 
     def run_pipeline(self, file_paths, advx_range):
         """
         Executes the full pipeline for this specific poisoner.
         """
-        print(f"\n{'='*50}\nExecuting Pipeline: {self.name.upper()}\n{'='*50}")
+        self.logger.info(f"Starting Pipeline: {self.name.upper()}")
         os.makedirs(self.complexity_dir, exist_ok=True)
         
         # 1. Apply Poisoning
         self.apply_poisoning(file_paths, advx_range)
         
         # 2. Extract Complexity
-        print(f"\nExtracting complexity measures for {self.name}...")
+        self.logger.info(f"\nExtracting complexity measures for {self.name}...")
         cmeasure_df = self.extract_complexity_measures()
         
         # 3. Create MetaDB
-        print(f"\nCreating Meta Database for {self.name}...")
+        self.logger.info(f"\nCreating Meta Database for {self.name}...")
         self.make_metadb(cmeasure_df)
