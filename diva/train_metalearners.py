@@ -8,8 +8,8 @@ import joblib
 
 
 # Folder containing all meta database CSVs and output folder for models
-folder_path = "metadbs"
-output_folder = "metalearners"
+folder_path = "./results/metadbs"
+output_folder = "./results/metalearners"
 
 # Create the output folder if it doesn't exist
 os.makedirs(output_folder, exist_ok=True)
@@ -70,7 +70,7 @@ for r in range(1, len(csv_files) + 1):
         combined_data = combine_meta_databases(file_paths)
 
         # Extract complexity measure columns and target column
-        complexity_measures = combined_data.loc[:, "c1":"t4"].dropna(axis=1).to_numpy()
+        complexity_measures = combined_data.loc[:, "c1":"t4"].fillna(0.0, axis=1).to_numpy() #Changed to fillna to always have the same amount of features
         target = combined_data["Test.Clean"].to_numpy()
 
         # Create a model name based on the combination of meta database files
@@ -79,4 +79,5 @@ for r in range(1, len(csv_files) + 1):
         )
 
         # Train and evaluate the SVM model
+        #! So train.poison and test.poison useless? (not used in the training of the svm...)
         train_and_evaluate_svm(complexity_measures, target, model_name)

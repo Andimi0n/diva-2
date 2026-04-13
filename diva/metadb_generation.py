@@ -21,7 +21,7 @@ from scripts.svm_alfa.svm_alfa_generate_metadb import alfa_poison
 
 
 def generate_synthetic_data(n_sets, folder):
-    N_SAMPLES = np.arange(100, 200, 200)
+    N_SAMPLES = np.arange(100, 200, 200) #! N_SAMPLES= [100] here. Not sure if it is a bug?
     N_CLASSES = 2  # Number of classes
 
     # Create directory
@@ -31,7 +31,7 @@ def generate_synthetic_data(n_sets, folder):
         path = Path(data_path)
         path.mkdir(parents=True)
 
-    grid = []
+    grid = [] #Contains parameters used for scikit-learn dataset generator
     for f in range(4, 31):
         grid.append(
             {
@@ -184,6 +184,7 @@ if __name__ == "__main__":
     os.makedirs(base, exist_ok=True)
 
     # Define poisoning methods with properly constructed paths
+    # TODO: change that into class or something better, more robust than a dictionary
     poisoning_methods = {
         "alfa_svm": {
             "poison_function": alfa_poison,
@@ -220,6 +221,7 @@ if __name__ == "__main__":
         print(f"\nProcessing poisoning method: {method_name}")
 
         # Apply poisoning using the corresponding function
+        #TODO: for poison_function, main class, each of them inherit from it to ensure proper parameters
         method_info["poison_function"](generated_files, advx_range, os.path.join(base, "poisoned_data"))
 
         # Step 3: Compute complexity measures from clean/poisoned files
