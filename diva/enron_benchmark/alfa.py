@@ -90,3 +90,90 @@ def alfa_poison(X, y, epsilon=0.03, max_iter=10):
     
     # Return exact same size X and y, with only labels flipped
     return X, y_poisoned_final
+
+
+import torch
+import torch.optim as optim
+import numpy as np
+import scipy.sparse as sp
+from tqdm import tqdm
+
+def alfa_pytorch(X_train, y_train, rate, C=1.0, max_iter=10, inner_iter=50):
+    """
+    GPU-Accelerated PyTorch implementation of the ALFA attack.
+    Replaces CPU-bound LP/QP solvers with Alternating Gradient Descent.
+    """
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    print(f"   -> Running PyTorch ALFA on: {device}")
+
+    if sp.issparse(X_train):
+        X_train = X_train.toarray()
+        
+    X = torch.tensor(X_train, dtype=torch.float32, device=device)
+    y = torch.tensor(y_train, dtype=torch.float32, device=device).view(-1, 1)
+
+    N, D = X.shape
+    budget = int(rate * N)
+
+    if budget == 0:
+        return y_train.copy()
+
+    # Initialize Model Parameters (w, b) and Attack Mask (q)
+    w = torch.zeros((D, 1), requires_grad=True, device=device)
+    b = torch.zeros(1, requires_grad=True, device=device)
+    
+    # q: 0 = original label, 1 = flipped label
+    q = torch.zeros((N, 1), device=device)
+
+    optimizer = optim.Adam([w, b], lr=0.05)
+
+    pbar = tqdm(range(max_iter), ncols=100, desc="ALFA Outer Loop")
+
+    for _ in pbar:
+        # Calculate the effectively poisoned labels: 
+        # If q=0, y_pois = y. If q=1, y_pois = -y.
+        y_pois = y * (1 - 2 * q)
+        
+        for _ in range(inner_iter):
+            optimizer.zero_grad()
+            
+            # Linear SVM Forward Pass & Hinge Loss
+            margin = y_pois * (X.mm(w) + b)
+            hinge_loss = torch.clamp(1 - margin, min=0).mean()
+            
+            # L2 Regularization
+            reg_loss = 0.5 * torch.sum(w ** 2) / C
+            
+            # Total Loss
+            loss = hinge_loss + reg_loss
+            loss.backward()
+            optimizer.step()
+
+        # ---------------------------------------------------------
+        # STEP 2: OUTER OPTIMIZATION (Update Attack) - Replaces solveLP
+        # ---------------------------------------------------------
+        with torch.no_grad():
+            # Calculate the loss if the label was untouched
+            margin_orig = y * (X.mm(w) + b)
+            loss_orig = torch.clamp(1 - margin_orig, min=0)
+            
+            # Calculate the loss if the label was flipped
+            margin_flipped = -y * (X.mm(w) + b)
+            loss_flipped = torch.clamp(1 - margin_flipped, min=0)
+            
+            # The "benefit" of flipping is exactly the 'psi' from the original paper
+            flip_benefit = loss_flipped - loss_orig
+            
+            # Reset q and enforce budget by taking the top K most beneficial flips
+            q.zero_()
+            _, top_indices = torch.topk(flip_benefit.squeeze(), budget)
+            q[top_indices] = 1.0
+            
+        pbar.set_postfix({'Max Flip Benefit': f"{flip_benefit[top_indices[0]].item():.4f}"})
+
+    with torch.no_grad():
+        flip_indices = top_indices.cpu().numpy()
+        y_flip = y_train.copy()
+        y_flip[flip_indices] = -y_flip[flip_indices]
+
+    return y_flip
