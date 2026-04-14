@@ -5,6 +5,8 @@ import logging
 import pandas as pd
 import numpy as np
 from sklearn.svm import SVR
+from sklearn.pipeline import make_pipeline
+from sklearn.preprocessing import StandardScaler
 from sklearn.model_selection import train_test_split
 from sklearn.metrics import mean_squared_error
 import joblib
@@ -61,7 +63,7 @@ def train_and_evaluate_svm(X, y, model_name, output_folder, logger, aim_run):
     )
 
     # Train an SVM model
-    svm_model = SVR()
+    svm_model = make_pipeline(StandardScaler(), SVR())
     svm_model.fit(X_train, y_train)
 
     # Predict and evaluate the model

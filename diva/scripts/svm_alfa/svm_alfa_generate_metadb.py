@@ -11,11 +11,13 @@ from scipy.stats import loguniform
 from .utils.alfa import alfa
 from .utils.utils import create_dir, open_csv, to_csv, transform_label
 from ..base_poisoner import BasePoisoner
+from sklearn.experimental import enable_halving_search_cv
+from sklearn.model_selection import HalvingRandomSearchCV
 
 warnings.filterwarnings('ignore')
 
 ALFA_MAX_ITER = 5
-N_ITER_SEARCH = 50
+N_ITER_SEARCH = 10
 SVM_PARAM_DICT = {
     'C': loguniform(0.01, 10),
     'gamma': loguniform(0.01, 10),
@@ -78,10 +80,16 @@ class AlfaPoisoner(BasePoisoner):
             dataname = Path(file_path).stem
 
             clf = SVC()
-            random_search = RandomizedSearchCV(clf, param_distributions=SVM_PARAM_DICT, n_iter=N_ITER_SEARCH, cv=5, n_jobs=-1)
-            random_search.fit(X_train, y_train)
+            halving_search = HalvingRandomSearchCV(
+                clf, 
+                param_distributions=SVM_PARAM_DICT, 
+                n_candidates='exhaust', 
+                factor=3, 
+                n_jobs=-1
+            )
+            halving_search.fit(X_train, y_train)
             
-            clf = SVC(**random_search.best_params_)
+            clf = SVC(**halving_search.best_params_)
             clf.fit(X_train, y_train)
 
             acc_train_clean, acc_test_clean, acc_train_poison, acc_test_poison, path_poison_data_list = self.compute_and_save_flipped_data(

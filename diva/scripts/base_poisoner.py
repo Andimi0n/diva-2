@@ -46,6 +46,7 @@ class BasePoisoner(ABC):
         poisoned_files = glob.glob(os.path.join(self.complexity_dir, "*.csv"))
         results = []
         for file in poisoned_files:
+            self.logger.info("  File {file} done.")
             data = pd.read_csv(file)
             X = data.iloc[:, :-1].values
             y = data.iloc[:, -1].values
