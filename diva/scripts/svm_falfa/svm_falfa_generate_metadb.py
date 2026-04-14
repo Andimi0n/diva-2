@@ -17,6 +17,9 @@ from .utils.simple_nn_model import SimpleModel
 from .utils.torch_utils import evaluate, train_model
 from .utils.utils import create_dir, open_csv, to_csv
 from ..base_poisoner import BasePoisoner
+import argparse
+from pathlib import Path
+import logging
 
 warnings.filterwarnings('ignore')
 
@@ -123,45 +126,73 @@ class FalfaNNPoisoner(BasePoisoner):
         
         return accuracy_train_clean, accuracy_test_clean, accuracy_train_poison, accuracy_test_poison, path_poison_data_list
 
-    def apply_poisoning(self, file_paths, advx_range):
-        for file_path in file_paths:
-            self.logger.info(f"Start poisoning for {file_path}")
-            
-            # Load and split data
-            X_train, y_train, cols = open_csv(file_path)
-            y_train = np.where(y_train == -1, 0, y_train)
-            X_train, X_test, y_train, y_test = train_test_split(X_train, y_train, test_size=0.2)
-            dataname = Path(file_path).stem
+    def apply_poisoning(self, file_path, advx_range):
+        # Load and split data
+        X_train, y_train, cols = open_csv(file_path)
+        y_train = np.where(y_train == -1, 0, y_train)
+        X_train, X_test, y_train, y_test = train_test_split(X_train, y_train, test_size=0.2)
+        dataname = Path(file_path).stem
 
-            # Setup initial clean model
-            n_features = X_train.shape[1]
-            model = SimpleModel(n_features, hidden_dim=HIDDEN_LAYER, output_dim=2).to(self.device)
-            optimizer = torch.optim.SGD(model.parameters(), lr=LR, momentum=MOMENTUM)
-            loss_fn = nn.CrossEntropyLoss()
+        # Setup initial clean model
+        n_features = X_train.shape[1]
+        model = SimpleModel(n_features, hidden_dim=HIDDEN_LAYER, output_dim=2).to(self.device)
+        optimizer = torch.optim.SGD(model.parameters(), lr=LR, momentum=MOMENTUM)
+        loss_fn = nn.CrossEntropyLoss()
 
-            # Train the initial clean model
-            dataloader_train = self.numpy2dataloader(X_train, y_train)
-            train_model(model, dataloader_train, optimizer, loss_fn, self.device, MAX_EPOCHS)
+        # Train the initial clean model
+        dataloader_train = self.numpy2dataloader(X_train, y_train)
+        train_model(model, dataloader_train, optimizer, loss_fn, self.device, MAX_EPOCHS)
 
-            # Get target paths and run pipeline
-            output_base_path = os.path.join(self.complexity_dir, dataname)
+        # Get target paths and run pipeline
+        output_base_path = os.path.join(self.complexity_dir, dataname)
 
-            acc_train_clean, acc_test_clean, acc_train_poison, acc_test_poison, path_poison_data_list = self.compute_and_save_flipped_data(
-                X_train, y_train, X_test, y_test, model, output_base_path, cols, advx_range
-            )
+        acc_train_clean, acc_test_clean, acc_train_poison, acc_test_poison, path_poison_data_list = self.compute_and_save_flipped_data(
+            X_train, y_train, X_test, y_test, model, output_base_path, cols, advx_range
+        )
 
-            # Save the final evaluation metrics to the shared CSV
-            data = {
-                'Data': np.tile(dataname, reps=len(advx_range)),
-                'Path.Poison': path_poison_data_list,
-                'Rate': advx_range,
-                'Train.Clean': acc_train_clean,
-                'Test.Clean': acc_test_clean,
-                'Train.Poison': acc_train_poison,
-                'Test.Poison': acc_test_poison,
-            }
-            df = pd.DataFrame(data)
-            
-            # Append to csv_score gracefully
-            df.to_csv(self.csv_score, mode='a' if os.path.exists(self.csv_score) else 'w', 
-                      header=not os.path.exists(self.csv_score), index=False)
+        # Save the final evaluation metrics to the shared CSV
+        data = {
+            'Data': np.tile(dataname, reps=len(advx_range)),
+            'Path.Poison': path_poison_data_list,
+            'Rate': advx_range,
+            'Train.Clean': acc_train_clean,
+            'Test.Clean': acc_test_clean,
+            'Train.Poison': acc_train_poison,
+            'Test.Poison': acc_test_poison,
+        }
+        df = pd.DataFrame(data)
+        
+        # Append to csv_score gracefully
+        df.to_csv(self.csv_score, mode='a' if os.path.exists(self.csv_score) else 'w', 
+                    header=not os.path.exists(self.csv_score), index=False)
+
+if __name__ == "__main__":
+    logging.basicConfig(
+        level=logging.INFO,
+        format='%(asctime)s [%(name)s] %(message)s',
+        datefmt='%H:%M:%S'
+    )
+    parser = argparse.ArgumentParser()
+    parser.add_argument("-f", "--folder", default="data", type=str, help="The output folder.")
+    parser.add_argument("-s", "--step", type=float, default=0.05, help="Spacing between poisoning rates.")
+    parser.add_argument("-m", "--max", type=float, default=0.41, help="End of interval for poisoning rates.")
+    parser.add_argument(
+        "-e", "--entrypoint", type=str,
+        default="poison", help="Entrypoint for the pipeline.",
+        choices= ["poison", "cmeasure","metadb"])
+    args = parser.parse_args()
+
+    base = args.folder
+    os.makedirs(base, exist_ok=True)
+    advx_range = np.arange(0, args.max, args.step)
+
+    # Initialize all your poisoners
+    poisoners = [
+        FalfaNNPoisoner(base_folder=base)
+    ]
+
+    files = [f for f in Path(f'{base}/clean_data/').iterdir() if f.is_file()]
+
+    # Run the standardized pipeline for each method
+    for poisoner in poisoners:
+        poisoner.run_pipeline(files, advx_range, entrypoint=args.entrypoint)

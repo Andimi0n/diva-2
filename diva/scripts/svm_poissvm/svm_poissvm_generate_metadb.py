@@ -10,6 +10,9 @@ from sklearn.model_selection import train_test_split
 from sklearn.metrics import accuracy_score, balanced_accuracy_score, precision_score, recall_score, f1_score
 
 from ..base_poisoner import BasePoisoner
+import argparse
+from pathlib import Path
+import logging
 
 # Constants
 RANDOM_SEED = 100
@@ -116,57 +119,86 @@ class PoisSVMPoisoner(BasePoisoner):
 
         return X_poisoned, y_poisoned, svm
 
-    def apply_poisoning(self, file_paths, advx_range):
-        for file in file_paths:
-            self.logger.info(f"Started poisoning for {file}")
-            X, y, _, _ = self.load_and_preprocess_data(file)
-            X_train_full, X_test, y_train_full, y_test = train_test_split(X, y, test_size=0.2, random_state=RANDOM_SEED, stratify=y)
-            X_train, X_val, y_train, y_val = train_test_split(X_train_full, y_train_full, test_size=0.2, random_state=RANDOM_SEED, stratify=y_train_full)
-            
-            base_file_name = "_".join(os.path.basename(file).split("_")[:-1])
-            results = []
+    def apply_poisoning(self, file, advx_range):
+        X, y, _, _ = self.load_and_preprocess_data(file)
+        X_train_full, X_test, y_train_full, y_test = train_test_split(X, y, test_size=0.2, random_state=RANDOM_SEED, stratify=y)
+        X_train, X_val, y_train, y_val = train_test_split(X_train_full, y_train_full, test_size=0.2, random_state=RANDOM_SEED, stratify=y_train_full)
+        
+        base_file_name = "_".join(os.path.basename(file).split("_")[:-1])
+        results = []
 
-            # 0% Clean Attack baseline
-            svm_clean = self.train_svm(X_train, y_train)
-            acc_train_clean, _, _, _, _ = self.evaluate(svm_clean, X_train, y_train)
-            acc_test_clean, _, _, _, _ = self.evaluate(svm_clean, X_test, y_test)
+        # 0% Clean Attack baseline
+        svm_clean = self.train_svm(X_train, y_train)
+        acc_train_clean, _, _, _, _ = self.evaluate(svm_clean, X_train, y_train)
+        acc_test_clean, _, _, _, _ = self.evaluate(svm_clean, X_test, y_test)
 
-            poison_file_name = f"{base_file_name}_numericalgradient_svm_0.00.csv"
+        poison_file_name = f"{base_file_name}_numericalgradient_svm_0.00.csv"
+        poison_data_path = os.path.join(self.complexity_dir, poison_file_name)
+        
+        pd.DataFrame(np.hstack([X_train, y_train.reshape(-1, 1)]), 
+                        columns=[f"feature_{i}" for i in range(X_train.shape[1])] + ["label"]).to_csv(poison_data_path, index=False)
+        
+        results.append({
+            "Data": os.path.basename(file), "Path.Poison": poison_data_path, "Rate": 0.00,
+            "Train.Clean": acc_train_clean, "Test.Clean": acc_test_clean,
+            "Train.Poison": acc_train_clean, "Test.Poison": acc_test_clean,
+        })
+
+        # Iterate Advx range > 0
+        for rate in advx_range:
+            if rate == 0.0: continue
+            num_attack_points = max(1, int(rate * len(X_train)))
+            X_poisoned, y_poisoned = X_train.copy(), y_train.copy()
+
+            for _ in range(num_attack_points):
+                X_poisoned, y_poisoned, svm_poisoned = self.gradient_ascent_attack(X_poisoned, y_poisoned, X_val, y_val)
+
+            acc_train_poison, _, _, _, _ = self.evaluate(svm_poisoned, X_poisoned, y_poisoned)
+            acc_test_poison, _, _, _, _ = self.evaluate(svm_poisoned, X_test, y_test)
+
+            poison_file_name = f"{base_file_name}_numericalgradient_svm_{rate:.2f}.csv"
             poison_data_path = os.path.join(self.complexity_dir, poison_file_name)
             
-            pd.DataFrame(np.hstack([X_train, y_train.reshape(-1, 1)]), 
-                         columns=[f"feature_{i}" for i in range(X_train.shape[1])] + ["label"]).to_csv(poison_data_path, index=False)
-            
+            pd.DataFrame(np.hstack([X_poisoned, y_poisoned.reshape(-1, 1)]), 
+                            columns=[f"feature_{i}" for i in range(X_poisoned.shape[1])] + ["label"]).to_csv(poison_data_path, index=False)
+
             results.append({
-                "Data": os.path.basename(file), "Path.Poison": poison_data_path, "Rate": 0.00,
+                "Data": os.path.basename(file), "Path.Poison": poison_data_path, "Rate": rate,
                 "Train.Clean": acc_train_clean, "Test.Clean": acc_test_clean,
-                "Train.Poison": acc_train_clean, "Test.Poison": acc_test_clean,
+                "Train.Poison": acc_train_poison, "Test.Poison": acc_test_poison,
             })
 
-            # Iterate Advx range > 0
-            for rate in advx_range:
-                if rate == 0.0: continue
-                num_attack_points = max(1, int(rate * len(X_train)))
-                X_poisoned, y_poisoned = X_train.copy(), y_train.copy()
+        df_results = pd.DataFrame(results)
+        df_results.to_csv(self.csv_score, mode='a' if os.path.exists(self.csv_score) else 'w', 
+                            header=not os.path.exists(self.csv_score), index=False)
 
-                for _ in range(num_attack_points):
-                    X_poisoned, y_poisoned, svm_poisoned = self.gradient_ascent_attack(X_poisoned, y_poisoned, X_val, y_val)
+if __name__ == "__main__":
+    logging.basicConfig(
+        level=logging.INFO,
+        format='%(asctime)s [%(name)s] %(message)s',
+        datefmt='%H:%M:%S'
+    )
+    parser = argparse.ArgumentParser()
+    parser.add_argument("-f", "--folder", default="data", type=str, help="The output folder.")
+    parser.add_argument("-s", "--step", type=float, default=0.05, help="Spacing between poisoning rates.")
+    parser.add_argument("-m", "--max", type=float, default=0.41, help="End of interval for poisoning rates.")
+    parser.add_argument(
+        "-e", "--entrypoint", type=str,
+        default="poison", help="Entrypoint for the pipeline.",
+        choices= ["poison", "cmeasure","metadb"])
+    args = parser.parse_args()
 
-                acc_train_poison, _, _, _, _ = self.evaluate(svm_poisoned, X_poisoned, y_poisoned)
-                acc_test_poison, _, _, _, _ = self.evaluate(svm_poisoned, X_test, y_test)
+    base = args.folder
+    os.makedirs(base, exist_ok=True)
+    advx_range = np.arange(0, args.max, args.step)
 
-                poison_file_name = f"{base_file_name}_numericalgradient_svm_{rate:.2f}.csv"
-                poison_data_path = os.path.join(self.complexity_dir, poison_file_name)
-                
-                pd.DataFrame(np.hstack([X_poisoned, y_poisoned.reshape(-1, 1)]), 
-                             columns=[f"feature_{i}" for i in range(X_poisoned.shape[1])] + ["label"]).to_csv(poison_data_path, index=False)
+    # Initialize all your poisoners
+    poisoners = [
+        PoisSVMPoisoner(base_folder=base)
+    ]
 
-                results.append({
-                    "Data": os.path.basename(file), "Path.Poison": poison_data_path, "Rate": rate,
-                    "Train.Clean": acc_train_clean, "Test.Clean": acc_test_clean,
-                    "Train.Poison": acc_train_poison, "Test.Poison": acc_test_poison,
-                })
+    files = [f for f in Path(f'{base}/clean_data/').iterdir() if f.is_file()]
 
-            df_results = pd.DataFrame(results)
-            df_results.to_csv(self.csv_score, mode='a' if os.path.exists(self.csv_score) else 'w', 
-                              header=not os.path.exists(self.csv_score), index=False)
+    # Run the standardized pipeline for each method
+    for poisoner in poisoners:
+        poisoner.run_pipeline(files, advx_range, entrypoint=args.entrypoint)

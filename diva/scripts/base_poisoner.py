@@ -4,6 +4,7 @@ import pandas as pd
 from abc import ABC, abstractmethod
 from pymfe.mfe import MFE
 import logging
+from tqdm import tqdm
 
 class BasePoisoner(ABC):
     """
@@ -22,10 +23,10 @@ class BasePoisoner(ABC):
             self.complexity_dir = os.path.join(base_folder, "poisoned_data", name)
             
         self.csv_score = os.path.join(base_folder, "poisoned_data", f"synth_{name}_score.csv")
-        self.meta_db = os.path.join(base_folder, "metadb", f"meta_database_{name}.csv")
+        self.meta_db = os.path.join(base_folder, "metadbs", f"meta_database_{name}.csv")
 
     @abstractmethod
-    def apply_poisoning(self, file_paths, advx_range):
+    def apply_poisoning(self, file_path, advx_range):
         """
         MUST be implemented by child classes. 
         Contains the specific logic to poison the data and save the CSVs.
@@ -44,9 +45,15 @@ class BasePoisoner(ABC):
         Shared logic to extract MFE complexity measures from the poisoned folder.
         """
         poisoned_files = glob.glob(os.path.join(self.complexity_dir, "*.csv"))
+
+        output_path = os.path.join(self.complexity_dir, "complexity_measures.csv")
+        if output_path in poisoned_files:
+            poisoned_files.remove(output_path)
+        
         results = []
-        for file in poisoned_files:
-            self.logger.info("  File {file} done.")
+        pbar = tqdm(poisoned_files, desc="Processing files")
+        for file in pbar:
+            pbar.set_postfix({'File': os.path.basename(file)})
             data = pd.read_csv(file)
             X = data.iloc[:, :-1].values
             y = data.iloc[:, -1].values
@@ -58,8 +65,26 @@ class BasePoisoner(ABC):
             result = {"file": os.path.basename(file)}
             result.update(dict(zip(features, values)))
             results.append(result)
+        
+        output_path = os.path.join(self.complexity_dir, "complexity_measures.csv")
+        df_complexity = pd.DataFrame(results)
+        df_complexity.to_csv(output_path, index=False)
+        self.logger.info(f"Successfully saved complexity measures to {output_path}")
 
-        return pd.DataFrame(results)
+        return df_complexity
+    
+    def get_complexity_measures(self):
+        """
+        Retrieves complexity measures by loading a cached CSV.
+        """
+        output_path = os.path.join(self.complexity_dir, "complexity_measures.csv")
+
+        # 1. Check if we have already processed these measures
+        if os.path.exists(output_path):
+            self.logger.info(f"Loading existing complexity measures from {output_path}")
+            return pd.read_csv(output_path)
+        else:
+            raise ValueError("No complexity measures found, start by computing them.")
 
     def make_metadb(self, cmeasure_dataframe):
         """
@@ -88,20 +113,29 @@ class BasePoisoner(ABC):
         merged_data.to_csv(self.meta_db, index=False)
         self.logger.info(f"Merged MetaDB saved to {self.meta_db}")
 
-    def run_pipeline(self, file_paths, advx_range):
+    def run_pipeline(self, file_paths, advx_range, entrypoint="poison"):
         """
         Executes the full pipeline for this specific poisoner.
         """
         self.logger.info(f"Starting Pipeline: {self.name.upper()}")
         os.makedirs(self.complexity_dir, exist_ok=True)
+        cmeasure_df = None
         
         # 1. Apply Poisoning
-        self.apply_poisoning(file_paths, advx_range)
-        
-        # 2. Extract Complexity
-        self.logger.info(f"\nExtracting complexity measures for {self.name}...")
-        cmeasure_df = self.extract_complexity_measures()
-        
-        # 3. Create MetaDB
-        self.logger.info(f"\nCreating Meta Database for {self.name}...")
-        self.make_metadb(cmeasure_df)
+        if entrypoint == "poison" :
+            for (i,file) in enumerate(file_paths):
+                self.logger.info(f"{i}/{len(file_paths)}: Started poisoning for file {file}")
+                self.apply_poisoning(file, advx_range)
+
+        if entrypoint in ("cmeasure", "poison") :
+            # 2. Extract Complexity
+            self.logger.info(f"\nExtracting complexity measures for {self.name}...")
+            cmeasure_df = self.extract_complexity_measures()
+
+        if entrypoint in ("metadb", "cmeasure", "poison") :
+            if cmeasure_df is None:
+                cmeasure_df = self.get_complexity_measures()
+
+            # 3. Create MetaDB
+            self.logger.info(f"\nCreating Meta Database for {self.name}...")
+            self.make_metadb(cmeasure_df)

@@ -31,7 +31,7 @@ def generate_synthetic_data(n_sets, folder, mode='high_dim'):
     data_path = os.path.join(folder, "clean_data")
     os.makedirs(data_path, exist_ok=True)
 
-    feature_ranges = list(range(10, 101, 20)) + [200, 500, 1000, 1500]
+    feature_ranges = list(range(10, 151, 10))
     
     grid = [] 
     for f in feature_ranges:
@@ -131,7 +131,7 @@ if __name__ == "__main__":
 
     # Initialize all your poisoners
     poisoners = [
-        FalfaNNPoisoner(base_folder=base),
+        #FalfaNNPoisoner(base_folder=base),
         AlfaPoisoner(base_folder=base),
         FeatureNoisePoisoner(base_folder=base),
         RandomFlipPoisoner(base_folder=base),
